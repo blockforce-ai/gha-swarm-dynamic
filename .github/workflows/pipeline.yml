@@ -31,13 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install yq
-        run: |
-          if ! command -v yq >/dev/null 2>&1; then
-            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            chmod +x /usr/local/bin/yq
-          fi
-
       - name: Parse clients-config.yml → build matrix
         id: parse
         shell: bash
@@ -131,13 +124,6 @@ jobs:
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install yq
-        run: |
-          if ! command -v yq >/dev/null 2>&1; then
-            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-            chmod +x /usr/local/bin/yq
-          fi
 
       - name: Pick swarm manager host
         id: pick
