@@ -127,7 +127,16 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+
+      - name: Checkout template scripts
+        uses: actions/checkout@v4
+        with:
+          repository: blockforce-ai/gha-swarm-dynamic
+          ref: main
+          path: .gha-template
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pick swarm manager host
         id: pick
@@ -146,7 +155,7 @@ jobs:
           SERVICE_NAME: ${{ inputs.service_name }}
           IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
         run: |
-          bash "${GITHUB_WORKSPACE}/scripts/generate-stack.sh"
+          bash "${GITHUB_WORKSPACE}/.gha-template/scripts/generate-stack.sh"
 
       - name: Deploy stack (SSH swarm manager)
         env:
@@ -156,4 +165,4 @@ jobs:
           STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
         run: |
-          bash "${GITHUB_WORKSPACE}/scripts/deploy-stack.sh"
+          bash "${GITHUB_WORKSPACE}/.gha-template/scripts/deploy-stack.sh"
