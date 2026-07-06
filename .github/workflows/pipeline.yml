@@ -1,0 +1,169 @@
+name: Reusable Pipeline (Swarm Dynamic)
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: "Nome do service (ex: tenant-api)"
+        required: true
+        type: string
+      config_file:
+        description: "Path do clients-config.yml"
+        required: false
+        type: string
+        default: ".gitlab/clients-config.yml"
+      registry:
+        description: "Container registry (default: ghcr.io)"
+        required: false
+        type: string
+        default: "ghcr.io"
+
+jobs:
+  # ==========================================================================
+  # Stage 1: Gera matrix (client × env) a partir de clients-config.yml
+  # ==========================================================================
+  generate-matrix:
+    name: Generate matrix
+    runs-on: [self-hosted, blockforce-swarm]
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+      env_name: ${{ steps.parse.outputs.env_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          if ! command -v yq >/dev/null 2>&1; then
+            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Parse clients-config.yml → build matrix
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG="${{ inputs.config_file }}"
+          if [ ! -f "$CONFIG" ]; then
+            echo "ERROR: $CONFIG não encontrado"; exit 1
+          fi
+
+          # Detecta env pela branch
+          BRANCH="${GITHUB_REF##*/}"
+          case "$BRANCH" in
+            develop) ENV_NAME="dev" ;;
+            stage)   ENV_NAME="stg" ;;
+            main)    ENV_NAME="prod" ;;
+            *)       ENV_NAME="dev" ;;
+          esac
+          echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
+          echo "Branch=$BRANCH → env=$ENV_NAME"
+
+          # Gera matrix: só clientes com env correspondente enabled
+          MATRIX=$(yq -o=json ".clients
+            | map(select(.enabled == true))
+            | map(. as \$c | .environments
+                | map(select(.enabled == true and .name == \"$ENV_NAME\"))
+                | map({\"client\": \$c.name, \"display_name\": \$c.display_name, \"env\": .name, \"branch\": .branch}))
+            | flatten
+            | {\"include\": .}" "$CONFIG" | jq -c .)
+
+          echo "Matrix:"
+          echo "$MATRIX" | jq .
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  # ==========================================================================
+  # Stage 2: Build docker image (por client × env)
+  # ==========================================================================
+  build:
+    name: Build ${{ matrix.client }}:${{ matrix.env }}
+    needs: generate-matrix
+    if: needs.generate-matrix.outputs.matrix != '{"include":[]}'
+    runs-on: [self-hosted, blockforce-swarm]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load env file (VARENV_<ENV>_<CLIENT>)
+        id: envfile
+        shell: bash
+        run: |
+          ENV_VAR="VARENV_$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')_$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')"
+          echo "Looking for secret: $ENV_VAR"
+          echo "env_var=$ENV_VAR" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push image
+        env:
+          IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
+          IMAGE_LATEST: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-latest
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg NODE_ENV="${{ matrix.env }}" \
+            --build-arg CLIENT="${{ matrix.client }}" \
+            -t "$IMAGE_TAG" \
+            -t "$IMAGE_LATEST" \
+            .
+          docker push "$IMAGE_TAG"
+          docker push "$IMAGE_LATEST"
+          echo "✓ Pushed: $IMAGE_TAG"
+
+  # ==========================================================================
+  # Stage 3: Gera stack file + deploy via SSH swarm manager
+  # ==========================================================================
+  deploy:
+    name: Deploy ${{ matrix.client }}:${{ matrix.env }}
+    needs: [generate-matrix, build]
+    if: needs.generate-matrix.outputs.matrix != '{"include":[]}'
+    runs-on: [self-hosted, blockforce-swarm]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          if ! command -v yq >/dev/null 2>&1; then
+            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Pick swarm manager host
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ needs.generate-matrix.outputs.env_name }}" = "prod" ]; then
+            echo "host=${{ secrets.SWARM_MANAGER_HOST_PROD }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=${{ secrets.SWARM_MANAGER_HOST_NP }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate stack file
+        env:
+          CLIENT: ${{ matrix.client }}
+          ENVIRONMENT: ${{ needs.generate-matrix.outputs.env_name }}
+          SERVICE_NAME: ${{ inputs.service_name }}
+          IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
+        run: |
+          bash "${GITHUB_WORKSPACE}/scripts/generate-stack.sh"
+
+      - name: Deploy stack (SSH swarm manager)
+        env:
+          SWARM_HOST: ${{ steps.pick.outputs.host }}
+          SWARM_USER: ${{ secrets.SWARM_USER }}
+          SWARM_SSH_KEY: ${{ secrets.SWARM_SSH_PRIVATE_KEY }}
+          STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
+          STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
+        run: |
+          bash "${GITHUB_WORKSPACE}/scripts/deploy-stack.sh"
