@@ -21,6 +21,15 @@ on:
         required: false
         type: string
         default: "ghcr.io"
+    secrets:
+      SWARM_MANAGER_HOST_NP:
+        required: true
+      SWARM_MANAGER_HOST_PROD:
+        required: true
+      SWARM_USER:
+        required: true
+      SWARM_SSH_PRIVATE_KEY:
+        required: true
 
 jobs:
   # ==========================================================================
