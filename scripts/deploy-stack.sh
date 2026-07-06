@@ -26,12 +26,38 @@ SSH_OPTS="-i $KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
 # Upload stack file
 scp $SSH_OPTS "$STACK_FILE" "${SWARM_USER}@${SWARM_HOST}:/tmp/${STACK_NAME}.yml"
 
+# Expected image (used pra sanity check pós-deploy)
+EXPECTED_IMAGE=$(grep -m1 -E '^\s+image:\s' "$STACK_FILE" | awk '{print $2}')
+
+# GHCR login remoto: sem isso o swarm pode ter credencial expirada e resolver-image falha
+# silenciosamente → auto-rollback pra image antiga com update reportando "completed".
+if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USER:-}" ]; then
+  ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
+    "echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin >/dev/null"
+fi
+
 # Deploy
 ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
-  "docker stack deploy --with-registry-auth --prune -c /tmp/${STACK_NAME}.yml ${STACK_NAME} && rm -f /tmp/${STACK_NAME}.yml"
+  "docker stack deploy --with-registry-auth --resolve-image always --prune -c /tmp/${STACK_NAME}.yml ${STACK_NAME} && rm -f /tmp/${STACK_NAME}.yml"
 
-echo "✓ Deploy complete: $STACK_NAME"
+echo "✓ Deploy comando OK: $STACK_NAME"
+
+# Sanity check: detecta rollback silencioso comparando image esperada vs running
+if [ -n "$EXPECTED_IMAGE" ]; then
+  sleep 8
+  EXPECTED_CLEAN=$(echo "$EXPECTED_IMAGE" | sed 's|@sha256:.*||')
+  RUNNING_IMAGE=$(ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
+    "docker service inspect ${STACK_NAME}_app --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null | sed 's|@sha256:.*||'" || echo "")
+  if [ -n "$RUNNING_IMAGE" ] && [ "$RUNNING_IMAGE" != "$EXPECTED_CLEAN" ]; then
+    echo ""
+    echo "❌ ROLLBACK SILENCIOSO DETECTADO"
+    echo "  Esperado: $EXPECTED_CLEAN"
+    echo "  Rodando:  $RUNNING_IMAGE"
+    echo "  Swarm falhou pull da image nova → auto-rollback pra spec anterior."
+    exit 1
+  fi
+fi
 
 # Verify
 ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
-  "sleep 10; docker stack services ${STACK_NAME}"
+  "docker stack services ${STACK_NAME}"
