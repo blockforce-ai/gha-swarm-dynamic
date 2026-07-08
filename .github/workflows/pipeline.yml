@@ -30,6 +30,8 @@ on:
         required: true
       SWARM_SSH_PRIVATE_KEY:
         required: true
+      GHCR_PAT:
+        required: true
 
 jobs:
   # ==========================================================================
@@ -97,8 +99,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ inputs.registry }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: blockforce-ai
+          password: ${{ secrets.GHCR_PAT }}
 
       - name: Load env file (VARENV_<ENV>_<CLIENT>)
         id: envfile
@@ -173,7 +175,7 @@ jobs:
           SWARM_SSH_KEY: ${{ secrets.SWARM_SSH_PRIVATE_KEY }}
           STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
+          GHCR_USER: blockforce-ai
         run: |
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/deploy-stack.sh"
