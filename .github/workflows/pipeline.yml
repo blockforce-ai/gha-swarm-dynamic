@@ -99,7 +99,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ inputs.registry }}
-          username: blockforce-ai
+          username: vitorta0506
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Load env file (VARENV_<ENV>_<CLIENT>)
@@ -176,6 +176,6 @@ jobs:
           STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
-          GHCR_USER: blockforce-ai
+          GHCR_USER: vitorta0506
         run: |
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/deploy-stack.sh"
