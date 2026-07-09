@@ -92,6 +92,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    # ponytail: DOCKER_CONFIG isolado por job — 4 runners rodam como mesmo user
+    # gharunner e compartilham ~/.docker/config.json. Sem isso, o "Post Login GHCR"
+    # (docker logout) de um job matrix paralelo remove o auth enquanto o outro
+    # ainda faz push → "unauthorized". Dir próprio por client/env resolve.
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/docker-${{ matrix.client }}-${{ matrix.env }}
     steps:
       - uses: actions/checkout@v4
 
