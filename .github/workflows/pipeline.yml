@@ -48,6 +48,8 @@ on:
         required: false
       VARENV_STG_RIACHUELO:
         required: false
+      VARENV_DEV_DEMO:
+        required: false
 
 jobs:
   # ==========================================================================
@@ -196,6 +198,7 @@ jobs:
           VARENV_PROD_AREZZO: ${{ secrets.VARENV_PROD_AREZZO }}
           VARENV_PROD_RIACHUELO: ${{ secrets.VARENV_PROD_RIACHUELO }}
           VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
+          VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
