@@ -97,7 +97,7 @@ jobs:
     # (docker logout) de um job matrix paralelo remove o auth enquanto o outro
     # ainda faz push → "unauthorized". Dir próprio por client/env resolve.
     env:
-      DOCKER_CONFIG: ${{ runner.temp }}/docker-${{ matrix.client }}-${{ matrix.env }}
+      DOCKER_CONFIG: /tmp/docker-${{ github.run_id }}-${{ matrix.client }}-${{ matrix.env }}
     steps:
       - uses: actions/checkout@v4
 
