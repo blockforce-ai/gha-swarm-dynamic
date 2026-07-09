@@ -32,6 +32,22 @@ on:
         required: true
       GHCR_PAT:
         required: true
+      # VARENV por env/cliente — injetados no container (env vars da app).
+      # Opcionais: o deploy seleciona VARENV_<ENV>_<CLIENT> por indireção bash.
+      VARENV_DEV_CEA:
+        required: false
+      VARENV_STG_CEA:
+        required: false
+      VARENV_DEV_BLOCKFORCE:
+        required: false
+      VARENV_PROD_BLOCKFORCE:
+        required: false
+      VARENV_PROD_AREZZO:
+        required: false
+      VARENV_PROD_RIACHUELO:
+        required: false
+      VARENV_STG_RIACHUELO:
+        required: false
 
 jobs:
   # ==========================================================================
@@ -170,8 +186,22 @@ jobs:
           CLIENT: ${{ matrix.client }}
           ENVIRONMENT: ${{ needs.generate-matrix.outputs.env_name }}
           SERVICE_NAME: ${{ inputs.service_name }}
+          STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
           IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
+          # Todos VARENV como env nomeadas; o script seleciona por indireção bash
+          VARENV_DEV_CEA: ${{ secrets.VARENV_DEV_CEA }}
+          VARENV_STG_CEA: ${{ secrets.VARENV_STG_CEA }}
+          VARENV_DEV_BLOCKFORCE: ${{ secrets.VARENV_DEV_BLOCKFORCE }}
+          VARENV_PROD_BLOCKFORCE: ${{ secrets.VARENV_PROD_BLOCKFORCE }}
+          VARENV_PROD_AREZZO: ${{ secrets.VARENV_PROD_AREZZO }}
+          VARENV_PROD_RIACHUELO: ${{ secrets.VARENV_PROD_RIACHUELO }}
+          VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
         run: |
+          ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
+          CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
+          VAR_NAME="VARENV_${ENV_UP}_${CLIENT_UP}"
+          export VARENV_CONTENT="${!VAR_NAME:-}"
+          [ -z "$VARENV_CONTENT" ] && echo "⚠ $VAR_NAME vazio — app sem env vars"
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/generate-stack.sh"
 
       - name: Deploy stack (SSH swarm manager)
