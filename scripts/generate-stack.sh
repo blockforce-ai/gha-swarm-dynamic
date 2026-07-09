@@ -69,7 +69,7 @@ $( [ -n "$ENV_BLOCK" ] && printf '%s' "$ENV_BLOCK" || echo "        []" )
         parallelism: 1
         delay: 10s
         order: start-first
-        failure_action: rollback
+        failure_action: pause
       rollback_config:
         parallelism: 1
         delay: 5s
