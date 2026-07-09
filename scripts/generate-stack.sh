@@ -22,6 +22,13 @@ Q=".clients[] | select(.name == \"$CLIENT\") | .environments[] | select(.name ==
 NETWORK_NAME=$(yq -r ".globals.network_name // \"blockforce\"" "$CONFIG_FILE")
 INGRESS_HOST=$(yq -r "$Q | .ingress.host // \"\"" "$CONFIG_FILE")
 APP_PORT=$(yq -r "$Q | .application.port // .ingress.port // 8080" "$CONFIG_FILE")
+
+# Traefik rule: host principal + additional_hosts (|| Host(extra))
+TRAEFIK_RULE="Host(\`${INGRESS_HOST}\`)"
+while IFS= read -r extra; do
+  [ -z "$extra" ] || [ "$extra" = "null" ] && continue
+  TRAEFIK_RULE="${TRAEFIK_RULE} || Host(\`${extra}\`)"
+done < <(yq -r "$Q | .ingress.additional_hosts[]?" "$CONFIG_FILE" 2>/dev/null)
 MEM_LIMIT=$(yq -r "$Q | .application.resources.memory_limit // \"512m\"" "$CONFIG_FILE")
 REPLICAS=$(yq -r "$Q | .application.replicas // 1" "$CONFIG_FILE")
 
@@ -77,7 +84,7 @@ $( [ -n "$ENV_BLOCK" ] && printf '%s' "$ENV_BLOCK" || echo "        []" )
         - "traefik.enable=true"
         - "traefik.docker.network=${NETWORK_NAME}"
         - "traefik.http.routers.${STACK_NAME}.entrypoints=web"
-        - "traefik.http.routers.${STACK_NAME}.rule=Host(\`${INGRESS_HOST}\`)"
+        - "traefik.http.routers.${STACK_NAME}.rule=${TRAEFIK_RULE}"
         - "traefik.http.services.${STACK_NAME}.loadbalancer.server.port=${APP_PORT}"
 
 networks:
