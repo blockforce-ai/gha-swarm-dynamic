@@ -160,7 +160,7 @@ jobs:
           BUILD_ARGS=()
           while IFS= read -r line; do
             case "$line" in
-              NEXT_PUBLIC_*=*|APP_URL=*)
+              NEXT_PUBLIC_*=*|VITE_*=*|APP_URL=*)
                 k="${line%%=*}"; v="${line#*=}"
                 v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"   # tira aspas externas
                 BUILD_ARGS+=(--build-arg "$k=$v"); echo "  build-arg: $k" ;;
