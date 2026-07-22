@@ -50,6 +50,10 @@ on:
         required: false
       VARENV_DEV_DEMO:
         required: false
+      # Opcional — se presente, o deploy cria/garante o registro DNS no Cloudflare
+      # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
+      CLOUDFLARE_API_TOKEN:
+        required: false
 
 jobs:
   # ==========================================================================
@@ -245,3 +249,31 @@ jobs:
           GHCR_USER: vitorta0506
         run: |
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/deploy-stack.sh"
+
+      # ======================================================================
+      # DNS automático (Cloudflare) — cria/garante A record dos hosts do ingress
+      # apontando pro swarm host (proxied). Idempotente (não mexe em record que
+      # já existe). Pulado se CLOUDFLARE_API_TOKEN não estiver setado.
+      # ======================================================================
+      - name: Ensure Cloudflare DNS (auto)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SWARM_HOST: ${{ steps.pick.outputs.host }}
+          CLIENT: ${{ matrix.client }}
+          ENV_NAME: ${{ needs.generate-matrix.outputs.env_name }}
+          CONFIG: ${{ inputs.config_file }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -z "${CF_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN ausente — pulando auto-DNS"; exit 0; fi
+          HOSTS=$(yq -r ".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\") | .ingress // {} | [.host] + (.additional_hosts // []) | .[]" "$CONFIG" 2>/dev/null | grep -vE '^(null|)$' || true)
+          if [ -z "$HOSTS" ]; then echo "ingress sem host — nada a fazer"; exit 0; fi
+          for H in $HOSTS; do
+            BASE=$(echo "$H" | awk -F. '{print $(NF-1)"."$NF}')
+            ZID=$(curl -s "https://api.cloudflare.com/client/v4/zones?name=${BASE}" -H "Authorization: Bearer ${CF_TOKEN}" | jq -r '.result[0].id // empty')
+            if [ -z "$ZID" ]; then echo "⚠ ${H}: zona ${BASE} inacessível pelo token — pulo"; continue; fi
+            N=$(curl -s "https://api.cloudflare.com/client/v4/zones/${ZID}/dns_records?name=${H}" -H "Authorization: Bearer ${CF_TOKEN}" | jq -r '.result | length')
+            if [ "${N:-0}" -gt 0 ]; then echo "✓ ${H} já existe (mantido)"; continue; fi
+            RESP=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZID}/dns_records" -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" --data "{\"type\":\"A\",\"name\":\"${H}\",\"content\":\"${SWARM_HOST}\",\"proxied\":true,\"comment\":\"auto swarm-dynamic ${CLIENT}/${ENV_NAME}\"}")
+            if echo "$RESP" | jq -e '.success' >/dev/null 2>&1; then echo "✓ ${H} → ${SWARM_HOST} (criado, proxied)"; else echo "⚠ ${H} falhou: $(echo "$RESP" | jq -c '.errors' 2>/dev/null)"; fi
+          done
