@@ -85,14 +85,14 @@ jobs:
           # Detecta env pela branch
           BRANCH="${GITHUB_REF##*/}"
           case "$BRANCH" in
-            develop)  ENV_NAME="dev" ;;
-            stage)    ENV_NAME="stg" ;;
-            main)     ENV_NAME="prod" ;;
-            # Branch de demo isolada (pecuária). Mapeamento EXPLÍCITO: sem ele a
-            # branch cairia no default `dev` e o matrix incluiria o cliente `cea`,
-            # redeployando o ambiente de demo atual a partir desta branch.
+            develop) ENV_NAME="dev" ;;
+            stage)   ENV_NAME="stg" ;;
+            main)    ENV_NAME="prod" ;;
+            # Mapeamento explícito: sem ele a branch cai no default `dev` e o
+            # matrix passa a incluir o cliente `cea`, redeployando o ambiente de
+            # demo atual a partir da branch de demonstração de pecuária.
             demo-bov) ENV_NAME="demo" ;;
-            *)        ENV_NAME="dev" ;;
+            *)       ENV_NAME="dev" ;;
           esac
           echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
           echo "Branch=$BRANCH → env=$ENV_NAME"
