@@ -50,6 +50,9 @@ on:
         required: false
       VARENV_DEV_DEMO:
         required: false
+      # Ambiente `demo` do cliente `bov` (branch demo-bov) — demo de pecuária.
+      VARENV_DEMO_BOV:
+        required: false
       # Opcional — se presente, o deploy cria/garante o registro DNS no Cloudflare
       # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
       CLOUDFLARE_API_TOKEN:
@@ -82,10 +85,14 @@ jobs:
           # Detecta env pela branch
           BRANCH="${GITHUB_REF##*/}"
           case "$BRANCH" in
-            develop) ENV_NAME="dev" ;;
-            stage)   ENV_NAME="stg" ;;
-            main)    ENV_NAME="prod" ;;
-            *)       ENV_NAME="dev" ;;
+            develop)  ENV_NAME="dev" ;;
+            stage)    ENV_NAME="stg" ;;
+            main)     ENV_NAME="prod" ;;
+            # Branch de demo isolada (pecuária). Mapeamento EXPLÍCITO: sem ele a
+            # branch cairia no default `dev` e o matrix incluiria o cliente `cea`,
+            # redeployando o ambiente de demo atual a partir desta branch.
+            demo-bov) ENV_NAME="demo" ;;
+            *)        ENV_NAME="dev" ;;
           esac
           echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
           echo "Branch=$BRANCH → env=$ENV_NAME"
@@ -151,6 +158,7 @@ jobs:
           VARENV_PROD_RIACHUELO: ${{ secrets.VARENV_PROD_RIACHUELO }}
           VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
+          VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
         run: |
           set -euo pipefail
           # Next.js inlina NEXT_PUBLIC_* no BUILD (não runtime). Sem passar como
@@ -230,6 +238,7 @@ jobs:
           VARENV_PROD_RIACHUELO: ${{ secrets.VARENV_PROD_RIACHUELO }}
           VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
+          VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
