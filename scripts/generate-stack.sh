@@ -32,6 +32,97 @@ done < <(yq -r "$Q | .ingress.additional_hosts[]?" "$CONFIG_FILE" 2>/dev/null)
 MEM_LIMIT=$(yq -r "$Q | .application.resources.memory_limit // \"512m\"" "$CONFIG_FILE")
 REPLICAS=$(yq -r "$Q | .application.replicas // 1" "$CONFIG_FILE")
 
+# ---------------------------------------------------------------------------
+# Serviços auxiliares dedicados (redis / dgraph), opt-in por ambiente.
+#
+# Só são emitidos quando o ambiente declara `redis.provision: true` ou
+# `dgraph.provision: true`. Nenhum clients-config existente tem essas chaves,
+# então cea/arezzo/riachuelo continuam gerando exatamente o mesmo stack de antes.
+#
+# Nomes seguem a convenção já usada no swarm (redis-cea-dev, dgraph-alpha-cea-stg):
+# `<componente>-<client>-<environment>`. Como a rede é compartilhada e externa, o
+# DNS entre stacks seria `<stack>_<servico>`; o alias de rede devolve o nome curto,
+# que é o que as apps esperam em REDIS_HOST / DGRAPH_HOST.
+# ---------------------------------------------------------------------------
+REDIS_PROVISION=$(yq -r "$Q | .redis.provision // false" "$CONFIG_FILE")
+DGRAPH_PROVISION=$(yq -r "$Q | .dgraph.provision // false" "$CONFIG_FILE")
+
+EXTRA_SERVICES=""
+EXTRA_VOLUMES=""
+
+if [ "$REDIS_PROVISION" = "true" ]; then
+  REDIS_NAME="redis-${CLIENT}-${ENVIRONMENT}"
+  REDIS_IMAGE=$(yq -r "$Q | .redis.image // \"redis:7-alpine\"" "$CONFIG_FILE")
+  REDIS_MEM=$(yq -r "$Q | .redis.memory_limit // \"256m\"" "$CONFIG_FILE")
+  EXTRA_SERVICES+="
+  ${REDIS_NAME}:
+    image: ${REDIS_IMAGE}
+    command: redis-server --appendonly yes
+    networks:
+      ${NETWORK_NAME}:
+        aliases:
+          - ${REDIS_NAME}
+    volumes:
+      - ${REDIS_NAME}:/data
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${REDIS_MEM}
+"
+  EXTRA_VOLUMES+="  ${REDIS_NAME}:
+"
+  echo "  + redis dedicado: ${REDIS_NAME}"
+fi
+
+if [ "$DGRAPH_PROVISION" = "true" ]; then
+  DGRAPH_ZERO="dgraph-zero-${CLIENT}-${ENVIRONMENT}"
+  DGRAPH_ALPHA="dgraph-alpha-${CLIENT}-${ENVIRONMENT}"
+  DGRAPH_IMAGE=$(yq -r "$Q | .dgraph.image // \"dgraph/dgraph:v23.1.0\"" "$CONFIG_FILE")
+  DGRAPH_MEM=$(yq -r "$Q | .dgraph.memory_limit // \"2g\"" "$CONFIG_FILE")
+  EXTRA_SERVICES+="
+  ${DGRAPH_ZERO}:
+    image: ${DGRAPH_IMAGE}
+    command: dgraph zero --my=${DGRAPH_ZERO}:5080 --replicas 1
+    networks:
+      ${NETWORK_NAME}:
+        aliases:
+          - ${DGRAPH_ZERO}
+    volumes:
+      - ${DGRAPH_ZERO}:/dgraph
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 512m
+
+  ${DGRAPH_ALPHA}:
+    image: ${DGRAPH_IMAGE}
+    command: dgraph alpha --my=${DGRAPH_ALPHA}:7080 --zero=${DGRAPH_ZERO}:5080 --security whitelist=0.0.0.0/0
+    networks:
+      ${NETWORK_NAME}:
+        aliases:
+          - ${DGRAPH_ALPHA}
+    volumes:
+      - ${DGRAPH_ALPHA}:/dgraph
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: ${DGRAPH_MEM}
+"
+  EXTRA_VOLUMES+="  ${DGRAPH_ZERO}:
+  ${DGRAPH_ALPHA}:
+"
+  echo "  + dgraph dedicado: ${DGRAPH_ZERO} + ${DGRAPH_ALPHA}"
+fi
+
 STACK_FILE="${STACKS_DIR}/${CLIENT}-${ENVIRONMENT}.yml"
 
 # Bloco environment a partir de VARENV_CONTENT (linhas KEY=value; ignora comentários/vazias)
@@ -86,12 +177,17 @@ $( [ -n "$ENV_BLOCK" ] && printf '%s' "$ENV_BLOCK" || echo "        []" )
         - "traefik.http.routers.${STACK_NAME}.entrypoints=web"
         - "traefik.http.routers.${STACK_NAME}.rule=${TRAEFIK_RULE}"
         - "traefik.http.services.${STACK_NAME}.loadbalancer.server.port=${APP_PORT}"
-
+${EXTRA_SERVICES}
 networks:
   ${NETWORK_NAME}:
     external: true
     name: ${NETWORK_NAME}
 EOF
+
+# Bloco volumes só existe quando há serviço auxiliar (compose rejeita chave vazia).
+if [ -n "$EXTRA_VOLUMES" ]; then
+  { printf '\nvolumes:\n'; printf '%s' "$EXTRA_VOLUMES"; } >> "$STACK_FILE"
+fi
 
 echo "✓ Stack: $STACK_FILE (host=$INGRESS_HOST port=$APP_PORT replicas=$REPLICAS)"
 # não faz cat (VARENV tem secrets)
