@@ -61,3 +61,28 @@ fi
 # Verify
 ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
   "docker stack services ${STACK_NAME}"
+
+# ---------------------------------------------------------------------------
+# Grafana deploy annotation — best-effort, NUNCA falha o deploy.
+# Marca no dashboard de uptime "o que subiu, quando, qual sha" → dá pra saber se
+# o que roda é o que foi deployado e correlacionar deploy × queda.
+# Token vem de /opt/gha/grafana-annotation.env no runner (GRAFANA_TOKEN + opc GRAFANA_URL).
+# Sem o arquivo/token, só pula (não quebra nada).
+# ---------------------------------------------------------------------------
+[ -f /opt/gha/grafana-annotation.env ] && . /opt/gha/grafana-annotation.env || true
+if [ -n "${GRAFANA_TOKEN:-}" ]; then
+  GRAFANA_URL="${GRAFANA_URL:-https://grafana.blockforce.ai}"
+  SHORT_SHA="${DEPLOY_SHA:0:8}"
+  TS_MS="$(date +%s)000"
+  A_SVC="${SERVICE_NAME:-$STACK_NAME}"
+  BODY=$(printf '{"time":%s,"tags":["deploy","%s","%s","%s"],"text":"deploy %s %s/%s sha=%s"}' \
+    "$TS_MS" "${DEPLOY_ENV:-}" "${DEPLOY_CLIENT:-}" "$A_SVC" \
+    "$A_SVC" "${DEPLOY_CLIENT:-}" "${DEPLOY_ENV:-}" "${SHORT_SHA:-?}")
+  if curl -sS -m 8 -X POST "${GRAFANA_URL}/api/annotations" \
+       -H "Authorization: Bearer ${GRAFANA_TOKEN}" -H "Content-Type: application/json" \
+       -d "$BODY" >/dev/null 2>&1; then
+    echo "✓ Grafana annotation postada (sha=${SHORT_SHA:-?})"
+  else
+    echo "⚠ Grafana annotation falhou (ignorado)"
+  fi
+fi

@@ -256,6 +256,11 @@ jobs:
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           GHCR_USER: vitorta0506
+          # contexto p/ annotation Grafana (best-effort no deploy-stack.sh)
+          SERVICE_NAME: ${{ inputs.service_name }}
+          DEPLOY_CLIENT: ${{ matrix.client }}
+          DEPLOY_ENV: ${{ needs.generate-matrix.outputs.env_name }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/deploy-stack.sh"
 

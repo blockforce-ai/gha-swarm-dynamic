@@ -33,6 +33,37 @@ MEM_LIMIT=$(yq -r "$Q | .application.resources.memory_limit // \"512m\"" "$CONFI
 REPLICAS=$(yq -r "$Q | .application.replicas // 1" "$CONFIG_FILE")
 
 # ---------------------------------------------------------------------------
+# Healthcheck opt-in (clients-config: application.healthcheck.enabled + path).
+# Default: SEM healthcheck — nenhum clients-config atual tem a chave, então o
+# stack gerado fica idêntico ao de antes. Só ligar onde o endpoint de health do
+# app é conhecido E a imagem tem wget/curl (senão o check falha sempre e, com
+# failure_action: rollback, derruba um serviço que estava saudável).
+# O rollback abaixo NÃO depende disto: sem healthcheck ele já pega crash/boot-fail
+# (task saindo non-zero dentro do monitor). O healthcheck só o torna mais fino.
+# ---------------------------------------------------------------------------
+HC_ENABLED=$(yq -r "$Q | .application.healthcheck.enabled // false" "$CONFIG_FILE")
+HEALTHCHECK_BLOCK=""
+if [ "$HC_ENABLED" = "true" ]; then
+  HC_PATH=$(yq -r "$Q | .application.healthcheck.path // \"/health\"" "$CONFIG_FILE")
+  HC_INTERVAL=$(yq -r "$Q | .application.healthcheck.interval // \"10s\"" "$CONFIG_FILE")
+  HC_TIMEOUT=$(yq -r "$Q | .application.healthcheck.timeout // \"3s\"" "$CONFIG_FILE")
+  HC_RETRIES=$(yq -r "$Q | .application.healthcheck.retries // 3" "$CONFIG_FILE")
+  HC_START=$(yq -r "$Q | .application.healthcheck.start_period // \"30s\"" "$CONFIG_FILE")
+  HC_TEST=$(yq -r "$Q | .application.healthcheck.test // \"\"" "$CONFIG_FILE")
+  if [ -z "$HC_TEST" ] || [ "$HC_TEST" = "null" ]; then
+    # default: wget (busybox/alpine). Apps sem wget devem setar .healthcheck.test no config.
+    HC_TEST="wget --no-verbose --tries=1 --spider http://localhost:${APP_PORT}${HC_PATH} || exit 1"
+  fi
+  HEALTHCHECK_BLOCK="    healthcheck:
+      test: [\"CMD-SHELL\", \"${HC_TEST}\"]
+      interval: ${HC_INTERVAL}
+      timeout: ${HC_TIMEOUT}
+      retries: ${HC_RETRIES}
+      start_period: ${HC_START}"
+  echo "  + healthcheck: ${HC_PATH} (interval=${HC_INTERVAL} start_period=${HC_START})"
+fi
+
+# ---------------------------------------------------------------------------
 # Serviços auxiliares dedicados (redis / dgraph), opt-in por ambiente.
 #
 # Só são emitidos quando o ambiente declara `redis.provision: true` ou
@@ -154,16 +185,21 @@ services:
       - ${NETWORK_NAME}
     environment:
 $( [ -n "$ENV_BLOCK" ] && printf '%s' "$ENV_BLOCK" || echo "        []" )
-    deploy:
+${HEALTHCHECK_BLOCK:+${HEALTHCHECK_BLOCK}
+}    deploy:
       replicas: ${REPLICAS}
       update_config:
         parallelism: 1
         delay: 10s
         order: start-first
-        failure_action: pause
+        monitor: 45s
+        max_failure_ratio: 0
+        failure_action: rollback
       rollback_config:
         parallelism: 1
         delay: 5s
+        failure_action: pause
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
