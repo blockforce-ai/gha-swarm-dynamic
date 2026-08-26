@@ -53,6 +53,10 @@ on:
       # Ambiente `demo` do cliente `bov` (branch demo-bov) — demo de pecuária.
       VARENV_DEMO_BOV:
         required: false
+      # Ambiente `demo` do cliente `mineracao` (branch demo-mineracao) — demo de
+      # rochas ornamentais para a apresentação do Sebrae em Varginha.
+      VARENV_DEMO_MINERACAO:
+        required: false
       # Opcional — se presente, o deploy cria/garante o registro DNS no Cloudflare
       # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
       CLOUDFLARE_API_TOKEN:
@@ -92,6 +96,7 @@ jobs:
             # matrix passa a incluir o cliente `cea`, redeployando o ambiente de
             # demo atual a partir da branch de demonstração de pecuária.
             demo-bov) ENV_NAME="demo" ;;
+            demo-mineracao) ENV_NAME="demo" ;;
             *)       ENV_NAME="dev" ;;
           esac
           echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
@@ -159,6 +164,7 @@ jobs:
           VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
+          VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
         run: |
           set -euo pipefail
           # Next.js inlina NEXT_PUBLIC_* no BUILD (não runtime). Sem passar como
@@ -239,6 +245,7 @@ jobs:
           VARENV_STG_RIACHUELO: ${{ secrets.VARENV_STG_RIACHUELO }}
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
+          VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
