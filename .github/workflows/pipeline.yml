@@ -235,7 +235,10 @@ jobs:
           SERVICE_NAME: ${{ inputs.service_name }}
           STACK_NAME: ${{ inputs.service_name }}-${{ matrix.client }}-${{ matrix.env }}
           IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
-          # Todos VARENV como env nomeadas; o script seleciona por indireção bash
+          # Vault (opcional — se setado, busca envs do Vault; senão usa secrets VARENV_*)
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+          # Fallback: VARENV por env/cliente (apps não migrados para Vault)
           VARENV_DEV_CEA: ${{ secrets.VARENV_DEV_CEA }}
           VARENV_STG_CEA: ${{ secrets.VARENV_STG_CEA }}
           VARENV_DEV_BLOCKFORCE: ${{ secrets.VARENV_DEV_BLOCKFORCE }}
@@ -249,9 +252,27 @@ jobs:
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
-          VAR_NAME="VARENV_${ENV_UP}_${CLIENT_UP}"
-          export VARENV_CONTENT="${!VAR_NAME:-}"
-          [ -z "$VARENV_CONTENT" ] && echo "⚠ $VAR_NAME vazio — app sem env vars"
+
+          if [ -n "$VAULT_ADDR" ] && [ -n "$VAULT_TOKEN" ]; then
+            echo "🔐 Fetching env from Vault: ${{ matrix.client }}/${{ needs.generate-matrix.outputs.env_name }}/${{ inputs.service_name }}"
+            VAULT_RESP=$(curl -sk -H "X-Vault-Token: $VAULT_TOKEN" \
+              "$VAULT_ADDR/v1/secret/data/${{ matrix.client }}/${{ needs.generate-matrix.outputs.env_name }}/${{ inputs.service_name }}")
+            if echo "$VAULT_RESP" | jq -e '.data.data' >/dev/null 2>&1; then
+              echo "$VAULT_RESP" | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"' > /tmp/varenv
+              export VARENV_CONTENT="$(cat /tmp/varenv)"
+              echo "✓ Vault: $(wc -l < /tmp/varenv) env vars carregados"
+            else
+              echo "⚠ Vault read falhou: $(echo "$VAULT_RESP" | jq -r '.errors[0] // "unknown"')"
+              VAR_NAME="VARENV_${ENV_UP}_${CLIENT_UP}"
+              export VARENV_CONTENT="${!VAR_NAME:-}"
+              [ -z "$VARENV_CONTENT" ] && echo "⚠ Fallback vazio — app sem env vars"
+            fi
+          else
+            VAR_NAME="VARENV_${ENV_UP}_${CLIENT_UP}"
+            export VARENV_CONTENT="${!VAR_NAME:-}"
+            [ -z "$VARENV_CONTENT" ] && echo "⚠ $VAR_NAME vazio — app sem env vars"
+          fi
+
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/generate-stack.sh"
 
       - name: Deploy stack (SSH swarm manager)
