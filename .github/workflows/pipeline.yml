@@ -48,6 +48,8 @@ on:
         required: false
       VARENV_STG_RIACHUELO:
         required: false
+      VARENV_STG_AREZZO:
+        required: false
       VARENV_DEV_DEMO:
         required: false
       # Ambiente `demo` do cliente `bov` (branch demo-bov) — demo de pecuária.
@@ -165,6 +167,7 @@ jobs:
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
+          VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
         run: |
           set -euo pipefail
           # Next.js inlina NEXT_PUBLIC_* no BUILD (não runtime). Sem passar como
@@ -249,6 +252,7 @@ jobs:
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
+          VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
