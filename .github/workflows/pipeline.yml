@@ -59,6 +59,10 @@ on:
       # rochas ornamentais para a apresentação do Sebrae em Varginha.
       VARENV_DEMO_MINERACAO:
         required: false
+      # Ambiente `demo` do cliente `florestal` (branch demo-florestal) — demo de
+      # legalidade florestal (Madeira Nativa) para a conversa com o Imaflora.
+      VARENV_DEMO_FLORESTAL:
+        required: false
       # Opcional — se presente, o deploy cria/garante o registro DNS no Cloudflare
       # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
       CLOUDFLARE_API_TOKEN:
@@ -99,6 +103,7 @@ jobs:
             # demo atual a partir da branch de demonstração de pecuária.
             demo-bov) ENV_NAME="demo" ;;
             demo-mineracao) ENV_NAME="demo" ;;
+            demo-florestal) ENV_NAME="demo" ;;
             *)       ENV_NAME="dev" ;;
           esac
           echo "env_name=$ENV_NAME" >> "$GITHUB_OUTPUT"
@@ -167,6 +172,7 @@ jobs:
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
+          VARENV_DEMO_FLORESTAL: ${{ secrets.VARENV_DEMO_FLORESTAL }}
           VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
         run: |
           set -euo pipefail
@@ -252,6 +258,7 @@ jobs:
           VARENV_DEV_DEMO: ${{ secrets.VARENV_DEV_DEMO }}
           VARENV_DEMO_BOV: ${{ secrets.VARENV_DEMO_BOV }}
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
+          VARENV_DEMO_FLORESTAL: ${{ secrets.VARENV_DEMO_FLORESTAL }}
           VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
