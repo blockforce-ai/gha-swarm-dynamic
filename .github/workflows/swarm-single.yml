@@ -46,7 +46,7 @@ on:
         type: string
         default: "."
       env_secret_name:
-        description: "Nome base do Docker secret (versionado com o sha a cada deploy)"
+        description: "Nome base do Docker secret (sufixo = hash do conteudo do .env vindo do Vault)"
         required: true
         type: string
       vault_path:
@@ -144,7 +144,6 @@ jobs:
           SSH_OPTS="-i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN -o ConnectTimeout=15"
           R="${SWARM_USER}@${SWARM_HOST}"
           REMOTE_STACK="$(ssh $SSH_OPTS "$R" 'mktemp --suffix=.yml')"
-          SECRET_NAME="${SECRET_BASE}_${SHA:0:12}"
 
           # Busca o .env no Vault (mesmo padrao do pipeline.yml: secret/data/<client>/<env>/<service>).
           RESP=$(curl -sk -m 15 -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/${VAULT_PATH}")
@@ -153,6 +152,9 @@ jobs:
           [ -z "$BAD" ] || { echo "ERRO: valores multilinha no Vault nao cabem em .env (chaves: $(echo $BAD | tr '\n' ' ')). Use base64."; exit 1; }
           APP_ENV=$(echo "$RESP" | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"')
           echo "Vault: $(echo "$APP_ENV" | wc -l | tr -d ' ') variaveis carregadas de ${VAULT_PATH}"
+
+          # Nome do secret = hash do CONTEUDO do .env (nao do commit): mudou no Vault -> secret novo, mesmo sem commit novo.
+          SECRET_NAME="${SECRET_BASE}_$(printf '%s' "$APP_ENV" | sha256sum | cut -c1-12)"
 
           # Docker secret e imutavel: cria uma versao nova por deploy e aponta o stack para ela.
           sed "s|^  ${SECRET_BASE}:\$|  ${SECRET_BASE}:\n    name: ${SECRET_NAME}|" "$STACK_FILE" > "$LOCAL_STACK"
