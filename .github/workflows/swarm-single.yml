@@ -23,12 +23,17 @@ on:
         description: "IP/host do manager Swarm de destino"
         required: true
         type: string
+      swarm_host_key:
+        description: "Host key publica do manager (ex: 'ssh-ed25519 AAAA...'). Obtida por canal confiavel: cat /etc/ssh/ssh_host_ed25519_key.pub"
+        required: true
+        type: string
       swarm_user:
         description: "Usuario SSH do deploy no manager"
         required: false
         type: string
         default: "deploy"
       stack_file:
+        description: "Compose do stack. O bloco 'secrets:' precisa ter a chave <env_secret_name> com exatamente 2 espacos de indentacao (o workflow falha se nao achar)."
         required: false
         type: string
         default: "deploy/stack.yml"
@@ -93,7 +98,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ inputs.registry }}
-          username: vitorta0506
+          username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
       - name: Build & push
@@ -118,6 +123,8 @@ jobs:
           SWARM_USER: ${{ inputs.swarm_user }}
           SSH_KEY: ${{ secrets.SWARM_SSH_PRIVATE_KEY }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
+          GHCR_USER: ${{ github.repository_owner }}
+          HOST_KEY: ${{ inputs.swarm_host_key }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
           VAULT_PATH: ${{ inputs.vault_path }}
@@ -131,26 +138,31 @@ jobs:
         run: |
           set -euo pipefail
           KEY="$(mktemp)"; chmod 600 "$KEY"; printf '%s\n' "$SSH_KEY" > "$KEY"
-          trap 'rm -f "$KEY"' EXIT
-          SSH_OPTS="-i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
+          KNOWN="$(mktemp)"; LOCAL_STACK="$(mktemp)"
+          trap 'rm -f "$KEY" "$KNOWN" "$LOCAL_STACK"' EXIT
+          printf '%s %s\n' "$SWARM_HOST" "$HOST_KEY" > "$KNOWN"
+          SSH_OPTS="-i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN -o ConnectTimeout=15"
           R="${SWARM_USER}@${SWARM_HOST}"
+          REMOTE_STACK="$(ssh $SSH_OPTS "$R" 'mktemp --suffix=.yml')"
           SECRET_NAME="${SECRET_BASE}_${SHA:0:12}"
 
           # Busca o .env no Vault (mesmo padrao do pipeline.yml: secret/data/<client>/<env>/<service>).
           RESP=$(curl -sk -m 15 -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/secret/data/${VAULT_PATH}")
           echo "$RESP" | jq -e '.data.data' >/dev/null 2>&1 || { echo "ERRO: Vault read falhou em ${VAULT_PATH}: $(echo "$RESP" | jq -r '.errors[0] // "resposta invalida"')"; exit 1; }
+          BAD=$(echo "$RESP" | jq -r '.data.data | to_entries[] | select((.value|tostring)|test("[\\n\\r]")) | .key')
+          [ -z "$BAD" ] || { echo "ERRO: valores multilinha no Vault nao cabem em .env (chaves: $(echo $BAD | tr '\n' ' ')). Use base64."; exit 1; }
           APP_ENV=$(echo "$RESP" | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"')
           echo "Vault: $(echo "$APP_ENV" | wc -l | tr -d ' ') variaveis carregadas de ${VAULT_PATH}"
 
           # Docker secret e imutavel: cria uma versao nova por deploy e aponta o stack para ela.
-          sed "s|^  ${SECRET_BASE}:\$|  ${SECRET_BASE}:\n    name: ${SECRET_NAME}|" "$STACK_FILE" > /tmp/stack.rendered.yml
-          grep -q "name: ${SECRET_NAME}" /tmp/stack.rendered.yml || { echo "ERRO: bloco secrets '${SECRET_BASE}' nao encontrado em ${STACK_FILE}"; exit 1; }
+          sed "s|^  ${SECRET_BASE}:\$|  ${SECRET_BASE}:\n    name: ${SECRET_NAME}|" "$STACK_FILE" > "$LOCAL_STACK"
+          grep -q "name: ${SECRET_NAME}" "$LOCAL_STACK" || { echo "ERRO: bloco secrets '${SECRET_BASE}' nao encontrado em ${STACK_FILE}"; exit 1; }
 
-          scp $SSH_OPTS /tmp/stack.rendered.yml "$R:/tmp/${STACK}.yml"
+          scp $SSH_OPTS "$LOCAL_STACK" "$R:$REMOTE_STACK"
           printf '%s' "$APP_ENV" | ssh $SSH_OPTS "$R" "docker secret inspect ${SECRET_NAME} >/dev/null 2>&1 || docker secret create ${SECRET_NAME} -"
-          ssh $SSH_OPTS "$R" "echo '${GHCR_TOKEN}' | docker login ghcr.io -u vitorta0506 --password-stdin >/dev/null"
+          printf '%s' "$GHCR_TOKEN" | ssh $SSH_OPTS "$R" "docker login ghcr.io -u '${GHCR_USER}' --password-stdin >/dev/null"
 
-          ssh $SSH_OPTS "$R" "IMAGE='${IMAGE}' docker stack deploy --with-registry-auth --resolve-image always --prune -c /tmp/${STACK}.yml ${STACK} && rm -f /tmp/${STACK}.yml"
+          ssh $SSH_OPTS "$R" "IMAGE='${IMAGE}' docker stack deploy --with-registry-auth --resolve-image always --prune -c $REMOTE_STACK ${STACK}; rc=\$?; rm -f $REMOTE_STACK; exit \$rc"
 
           # Espera o service convergir e detecta rollback silencioso.
           for i in $(seq 1 30); do
@@ -174,5 +186,5 @@ jobs:
           fi
 
           # Limpa versoes antigas do secret (mantem as 3 mais recentes).
-          ssh $SSH_OPTS "$R" "docker secret ls --format '{{.Name}} {{.CreatedAt}}' | grep '^${SECRET_BASE}_' | sort -k2 -r | tail -n +4 | cut -d' ' -f1 | xargs -r docker secret rm >/dev/null 2>&1 || true"
+          ssh $SSH_OPTS "$R" "docker secret ls --filter name=${SECRET_BASE}_ --format '{{.CreatedAt}}|{{.Name}}' | sort -r | tail -n +4 | cut -d'|' -f2 | xargs -r docker secret rm >/dev/null 2>&1 || true"
           echo "Deploy OK: ${IMAGE}"
