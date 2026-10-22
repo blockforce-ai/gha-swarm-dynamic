@@ -63,6 +63,10 @@ on:
       # legalidade florestal (Madeira Nativa) para a conversa com o Imaflora.
       VARENV_DEMO_FLORESTAL:
         required: false
+      # Cliente `cubic` no ambiente dev (branch develop) — demo do Trust Layer só
+      # Cardano (anchoring + trust-layer-gateway), sem Fabric e sem tenant-api.
+      VARENV_DEV_CUBIC:
+        required: false
       # Opcional — se presente, o deploy cria/garante o registro DNS no Cloudflare
       # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
       CLOUDFLARE_API_TOKEN:
@@ -174,6 +178,7 @@ jobs:
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
           VARENV_DEMO_FLORESTAL: ${{ secrets.VARENV_DEMO_FLORESTAL }}
           VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
+          VARENV_DEV_CUBIC: ${{ secrets.VARENV_DEV_CUBIC }}
         run: |
           set -euo pipefail
           # Next.js inlina NEXT_PUBLIC_* no BUILD (não runtime). Sem passar como
@@ -260,6 +265,7 @@ jobs:
           VARENV_DEMO_MINERACAO: ${{ secrets.VARENV_DEMO_MINERACAO }}
           VARENV_DEMO_FLORESTAL: ${{ secrets.VARENV_DEMO_FLORESTAL }}
           VARENV_STG_AREZZO: ${{ secrets.VARENV_STG_AREZZO }}
+          VARENV_DEV_CUBIC: ${{ secrets.VARENV_DEV_CUBIC }}
         run: |
           ENV_UP=$(echo "${{ needs.generate-matrix.outputs.env_name }}" | tr '[:lower:]' '[:upper:]')
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
