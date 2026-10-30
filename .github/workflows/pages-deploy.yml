@@ -21,10 +21,14 @@ on:
 jobs:
   deploy:
     name: Deploy Pages
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, blockforce-swarm]
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Deploy to Cloudflare Pages
         run: npx --yes wrangler@4 pages deploy "${{ inputs.build_output_dir }}" --project-name="${{ inputs.project_name }}" --branch="${GITHUB_REF_NAME}"
