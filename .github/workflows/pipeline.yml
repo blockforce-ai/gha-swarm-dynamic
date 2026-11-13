@@ -71,6 +71,19 @@ on:
       # (A → swarm host, proxied) pros hosts do ingress. Sem ele, o passo é pulado.
       CLOUDFLARE_API_TOKEN:
         required: false
+      # Declaradas porque o passo "Load env file" ja usa secrets.VAULT_ADDR e
+      # secrets.VAULT_TOKEN. Sem a declaracao, quem chama este reusable
+      # enumerando os secrets um a um NAO consegue entrega-las -- o GitHub
+      # recusa secret que o workflow chamado nao declara. O resultado hoje e que
+      # a leitura do Vault nunca acontece e todo mundo cai no VARENV_*.
+      # O swarm-single.yml deste mesmo repo ja declara as duas; aqui faltava.
+      # `required: false` para que quem nao usa Vault continue funcionando.
+      VAULT_ADDR:
+        description: "Endereco do Vault. Vazio desliga a leitura e cai no VARENV_<ENV>_<CLIENTE>."
+        required: false
+      VAULT_TOKEN:
+        description: "Token read-only (policy deploy-read)."
+        required: false
 
 jobs:
   # ==========================================================================
