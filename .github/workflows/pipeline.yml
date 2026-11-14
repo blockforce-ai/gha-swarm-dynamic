@@ -357,10 +357,13 @@ jobs:
           set -uo pipefail
           if [ -z "${CF_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN ausente — pulando auto-DNS"; exit 0; fi
           Q=".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\")"
-          # ingress.dns: false desliga o passo. Usado quando o host e curinga no
-          # MEIO (`<slug>-freemium.blockforce.ai`): DNS nao tem wildcard parcial —
-          # `*-freemium` nao e registro valido —, entao a cobertura vem de um
-          # `*.blockforce.ai` criado uma vez fora da pipeline.
+          # ingress.dns: false desliga o passo (escape hatch). O caso que importa hoje
+          # e outro: host com curinga no MEIO (`<slug>-freemium.blockforce.ai`)
+          # nao tem registro DNS possivel — curinga so existe no rotulo mais a
+          # esquerda, e a Cloudflare chega a aceitar `*-freemium...` pela API mas
+          # nenhum nome resolve por ele. A saida e apontar `dns_hosts` para o
+          # curinga de ZONA (`*.blockforce.ai`), que este passo cria/garante como
+          # qualquer outro host.
           DNS_ENABLED=$(yq -r "$Q | .ingress.dns // true" "$CONFIG" 2>/dev/null || echo true)
           if [ "$DNS_ENABLED" = "false" ]; then
             echo "ingress.dns=false — DNS gerenciado fora da pipeline (wildcard de zona)"
@@ -375,8 +378,10 @@ jobs:
           fi
           if [ -z "$HOSTS" ]; then echo "ingress sem host — nada a fazer"; exit 0; fi
           for H in $HOSTS; do
-            # Cloudflare so aceita curinga no PRIMEIRO rotulo. Nome com `*` em
-            # outra posicao seria rejeitado pela API — avisa e pula.
+            # Curinga de DNS so funciona como o rotulo MAIS A ESQUERDA (`*.dominio`).
+            # A Cloudflare aceita gravar `*-freemium...` pela API e devolve
+            # success, mas nenhum nome resolve — ja queimou tempo assim. Avisa e
+            # pula em vez de criar registro inerte.
             case "$H" in
               \**)
                 if [ "${H#\*.}" = "$H" ]; then echo "⚠ ${H}: curinga fora do primeiro rotulo — DNS invalido, pulo"; continue; fi
