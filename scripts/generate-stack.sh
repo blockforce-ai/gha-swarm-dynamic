@@ -23,12 +23,35 @@ NETWORK_NAME=$(yq -r ".globals.network_name // \"blockforce\"" "$CONFIG_FILE")
 INGRESS_HOST=$(yq -r "$Q | .ingress.host // \"\"" "$CONFIG_FILE")
 APP_PORT=$(yq -r "$Q | .application.port // .ingress.port // 8080" "$CONFIG_FILE")
 
-# Traefik rule: host principal + additional_hosts (|| Host(extra))
-TRAEFIK_RULE="Host(\`${INGRESS_HOST}\`)"
-while IFS= read -r extra; do
-  [ -z "$extra" ] || [ "$extra" = "null" ] && continue
-  TRAEFIK_RULE="${TRAEFIK_RULE} || Host(\`${extra}\`)"
-done < <(yq -r "$Q | .ingress.additional_hosts[]?" "$CONFIG_FILE" 2>/dev/null)
+# Traefik rule: host principal + additional_hosts (|| Host(extra)).
+#
+# `ingress.rule` sobrepoe tudo: regra CRUA do Traefik, escrita por extenso no
+# clients-config. Existe porque `Host()` so aceita curinga no PRIMEIRO rotulo
+# (`*.dominio`) — em v2 nem isso. Quando o host tem curinga no meio
+# (`<slug>-freemium.blockforce.ai`, um rotulo, sem subdominio de subdominio) so
+# `HostRegexp` resolve, e nao ha como derivar a regex de um host literal.
+#
+# `ingress.priority` e opcional e vai como label. Sem ela o Traefik ordena por
+# comprimento da regra, o que e deterministico mas fragil: duas regexes que
+# casam com o mesmo host (front `-freemium` casa com `...-api-freemium`) ficam
+# dependentes de quem escreveu a string mais longa. Quem usa `rule` deve setar.
+INGRESS_RULE=$(yq -r "$Q | .ingress.rule // \"\"" "$CONFIG_FILE" 2>/dev/null || echo "")
+if [ -n "$INGRESS_RULE" ] && [ "$INGRESS_RULE" != "null" ]; then
+  TRAEFIK_RULE="$INGRESS_RULE"
+else
+  TRAEFIK_RULE="Host(\`${INGRESS_HOST}\`)"
+  while IFS= read -r extra; do
+    [ -z "$extra" ] || [ "$extra" = "null" ] && continue
+    TRAEFIK_RULE="${TRAEFIK_RULE} || Host(\`${extra}\`)"
+  done < <(yq -r "$Q | .ingress.additional_hosts[]?" "$CONFIG_FILE" 2>/dev/null)
+fi
+
+INGRESS_PRIORITY=$(yq -r "$Q | .ingress.priority // \"\"" "$CONFIG_FILE" 2>/dev/null || echo "")
+PRIORITY_LABEL=""
+if [ -n "$INGRESS_PRIORITY" ] && [ "$INGRESS_PRIORITY" != "null" ]; then
+  PRIORITY_LABEL="
+        - \"traefik.http.routers.${STACK_NAME}.priority=${INGRESS_PRIORITY}\""
+fi
 MEM_LIMIT=$(yq -r "$Q | .application.resources.memory_limit // \"512m\"" "$CONFIG_FILE")
 REPLICAS=$(yq -r "$Q | .application.replicas // 1" "$CONFIG_FILE")
 
@@ -175,6 +198,15 @@ if [ -n "${VARENV_CONTENT:-}" ]; then
   done <<< "$VARENV_CONTENT"
 fi
 
+# Arquivo .env do mesmo ambiente, para o one-shot de migration (docker run
+# --env-file). O stack continua recebendo o env inline, como antes: este arquivo
+# e um extra, e so existe quando ha VARENV_CONTENT. chmod 600 porque tem secret.
+ENV_FILE="${STACKS_DIR}/${CLIENT}-${ENVIRONMENT}.env"
+if [ -n "${VARENV_CONTENT:-}" ]; then
+  printf '%s\n' "$VARENV_CONTENT" > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+fi
+
 cat > "$STACK_FILE" <<EOF
 version: "3.8"
 
@@ -211,7 +243,7 @@ ${HEALTHCHECK_BLOCK:+${HEALTHCHECK_BLOCK}
         - "traefik.enable=true"
         - "traefik.docker.network=${NETWORK_NAME}"
         - "traefik.http.routers.${STACK_NAME}.entrypoints=web"
-        - "traefik.http.routers.${STACK_NAME}.rule=${TRAEFIK_RULE}"
+        - "traefik.http.routers.${STACK_NAME}.rule=${TRAEFIK_RULE}"${PRIORITY_LABEL}
         - "traefik.http.services.${STACK_NAME}.loadbalancer.server.port=${APP_PORT}"
 ${EXTRA_SERVICES}
 networks:

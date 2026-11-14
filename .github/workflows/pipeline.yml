@@ -305,6 +305,20 @@ jobs:
 
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/generate-stack.sh"
 
+      - name: Read one-shot migration command
+        id: mig
+        shell: bash
+        env:
+          CONFIG: ${{ inputs.config_file }}
+          CLIENT: ${{ matrix.client }}
+          ENV_NAME: ${{ needs.generate-matrix.outputs.env_name }}
+        run: |
+          set -uo pipefail
+          CMD=$(yq -r ".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\") | .application.migrations.command // \"\"" "$CONFIG" 2>/dev/null || true)
+          [ "$CMD" = "null" ] && CMD=""
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
+          [ -n "$CMD" ] && echo "Migration one-shot: $CMD"
+
       - name: Deploy stack (SSH swarm manager)
         env:
           SWARM_HOST: ${{ steps.pick.outputs.host }}
@@ -314,6 +328,10 @@ jobs:
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           GHCR_USER: vitorta0506
+          # Migration one-shot + env file gerado junto do stack (opt-in)
+          MIGRATIONS_CMD: ${{ steps.mig.outputs.cmd }}
+          ENV_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.env
+          NETWORK_NAME: blockforce
           # contexto p/ annotation Grafana (best-effort no deploy-stack.sh)
           SERVICE_NAME: ${{ inputs.service_name }}
           DEPLOY_CLIENT: ${{ matrix.client }}
@@ -338,9 +356,37 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${CF_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN ausente — pulando auto-DNS"; exit 0; fi
-          HOSTS=$(yq -r ".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\") | .ingress // {} | [.host] + (.additional_hosts // []) | .[]" "$CONFIG" 2>/dev/null | grep -vE '^(null|)$' || true)
+          Q=".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\")"
+          # ingress.dns: false desliga o passo (escape hatch). O caso que importa hoje
+          # e outro: host com curinga no MEIO (`<slug>-freemium.blockforce.ai`)
+          # nao tem registro DNS possivel — curinga so existe no rotulo mais a
+          # esquerda, e a Cloudflare chega a aceitar `*-freemium...` pela API mas
+          # nenhum nome resolve por ele. A saida e apontar `dns_hosts` para o
+          # curinga de ZONA (`*.blockforce.ai`), que este passo cria/garante como
+          # qualquer outro host.
+          DNS_ENABLED=$(yq -r "$Q | .ingress.dns // true" "$CONFIG" 2>/dev/null || echo true)
+          if [ "$DNS_ENABLED" = "false" ]; then
+            echo "ingress.dns=false — DNS gerenciado fora da pipeline (wildcard de zona)"
+            exit 0
+          fi
+          # dns_hosts, quando presente, manda; senao host + additional_hosts.
+          EXPLICIT=$(yq -r "$Q | [.ingress.dns_hosts // []] | .[] | .[]" "$CONFIG" 2>/dev/null | grep -vE '^(null|)$' || true)
+          if [ -n "$EXPLICIT" ]; then
+            HOSTS="$EXPLICIT"
+          else
+            HOSTS=$(yq -r "$Q | .ingress // {} | [.host] + (.additional_hosts // []) | .[]" "$CONFIG" 2>/dev/null | grep -vE '^(null|)$' || true)
+          fi
           if [ -z "$HOSTS" ]; then echo "ingress sem host — nada a fazer"; exit 0; fi
           for H in $HOSTS; do
+            # Curinga de DNS so funciona como o rotulo MAIS A ESQUERDA (`*.dominio`).
+            # A Cloudflare aceita gravar `*-freemium...` pela API e devolve
+            # success, mas nenhum nome resolve — ja queimou tempo assim. Avisa e
+            # pula em vez de criar registro inerte.
+            case "$H" in
+              \**)
+                if [ "${H#\*.}" = "$H" ]; then echo "⚠ ${H}: curinga fora do primeiro rotulo — DNS invalido, pulo"; continue; fi
+                ;;
+            esac
             BASE=$(echo "$H" | awk -F. '{print $(NF-1)"."$NF}')
             ZID=$(curl -s "https://api.cloudflare.com/client/v4/zones?name=${BASE}" -H "Authorization: Bearer ${CF_TOKEN}" | jq -r '.result[0].id // empty')
             if [ -z "$ZID" ]; then echo "⚠ ${H}: zona ${BASE} inacessível pelo token — pulo"; continue; fi

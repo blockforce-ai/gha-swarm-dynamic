@@ -36,6 +36,36 @@ if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USER:-}" ]; then
     "echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin >/dev/null"
 fi
 
+# ---------------------------------------------------------------------------
+# Migration one-shot (opt-in: application.migrations.command no clients-config).
+#
+# Roda a migration como container efemero, no manager, ANTES do stack deploy.
+# Por que nao no CMD da imagem: com replicas > 1 o Swarm sobe N tasks e TODAS
+# executariam a migration ao mesmo tempo; e com `order: start-first` o container
+# novo roda migration enquanto o antigo ainda serve. TypeORM nao tem advisory
+# lock entre processos, entao a corrida aparece como duplicate key em
+# `migrations` — ou pior, como deploy verde com schema pela metade.
+#
+# A env vem do arquivo .env gerado junto do stack (mesmo VARENV/Vault), copiado
+# para o manager e apagado no fim.
+# ---------------------------------------------------------------------------
+if [ -n "${MIGRATIONS_CMD:-}" ]; then
+  NET="${NETWORK_NAME:-blockforce}"
+  ENV_ARG=""
+  if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+    scp $SSH_OPTS "$ENV_FILE" "${SWARM_USER}@${SWARM_HOST}:/tmp/${STACK_NAME}.env"
+    ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" "chmod 600 /tmp/${STACK_NAME}.env"
+    ENV_ARG="--env-file /tmp/${STACK_NAME}.env"
+  else
+    echo "⚠ MIGRATIONS_CMD setado sem ENV_FILE — migration roda sem env do app"
+  fi
+  echo "=== Migration one-shot: ${MIGRATIONS_CMD} ==="
+  ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
+    "docker run --rm --pull always --network ${NET} ${ENV_ARG} '${EXPECTED_IMAGE}' sh -lc '${MIGRATIONS_CMD}'"
+  ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" "rm -f /tmp/${STACK_NAME}.env"
+  echo "✓ Migration OK"
+fi
+
 # Deploy
 ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
   "docker stack deploy --with-registry-auth --resolve-image always --prune -c /tmp/${STACK_NAME}.yml ${STACK_NAME} && rm -f /tmp/${STACK_NAME}.yml"
