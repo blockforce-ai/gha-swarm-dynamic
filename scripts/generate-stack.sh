@@ -156,6 +156,17 @@ fi
 
 STACK_FILE="${STACKS_DIR}/${CLIENT}-${ENVIRONMENT}.yml"
 
+# Arquivo .env cru ao lado do stack, usado pela migration one-shot.
+# Nao serve para o `stack deploy` (o environment do YAML ja cobre isso): serve
+# para o `docker run --env-file` da migration, que precisa do MESMO env da app
+# (Vault/VARENV) para conectar no banco.
+ENV_FILE="${STACKS_DIR}/${CLIENT}-${ENVIRONMENT}.env"
+if [ -n "${VARENV_CONTENT:-}" ]; then
+  printf '%s\n' "$VARENV_CONTENT" > "$ENV_FILE"
+else
+  : > "$ENV_FILE"
+fi
+
 # Bloco environment a partir de VARENV_CONTENT (linhas KEY=value; ignora comentários/vazias)
 ENV_BLOCK=""
 if [ -n "${VARENV_CONTENT:-}" ]; then
