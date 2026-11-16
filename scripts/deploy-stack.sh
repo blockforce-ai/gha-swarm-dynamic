@@ -26,6 +26,13 @@ SSH_OPTS="-i $KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/nu
 # Upload stack file
 scp $SSH_OPTS "$STACK_FILE" "${SWARM_USER}@${SWARM_HOST}:/tmp/${STACK_NAME}.yml"
 
+# Upload do .env (só quando ha migration one-shot). O arquivo existe sempre;
+# vazio significa app sem env, e o `--env-file` de um arquivo vazio e inofensivo.
+ENV_FILE="${ENV_FILE:-}"
+if [ -n "${MIGRATIONS_CMD:-}" ] && [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+  scp $SSH_OPTS "$ENV_FILE" "${SWARM_USER}@${SWARM_HOST}:/tmp/${STACK_NAME}.env"
+fi
+
 # Expected image (used pra sanity check pós-deploy)
 EXPECTED_IMAGE=$(grep -m1 -E '^\s+image:\s' "$STACK_FILE" | awk '{print $2}')
 
@@ -34,6 +41,23 @@ EXPECTED_IMAGE=$(grep -m1 -E '^\s+image:\s' "$STACK_FILE" | awk '{print $2}')
 if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USER:-}" ]; then
   ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
     "echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin >/dev/null"
+fi
+
+# Migration ONE-SHOT, antes do stack deploy.
+#
+# Por que container efemero e nao CMD da imagem: com `replicas > 1` todas as
+# tasks executariam a migration ao mesmo tempo, e com `order: start-first` a
+# task nova migraria com a antiga ainda no ar. O TypeORM nao tem advisory lock
+# entre processos. Aqui e um processo so, e se falhar o deploy PARA.
+#
+# O env vem do mesmo .env do serviço (`--env-file`): a app conecta como
+# `freemium_app` e a migration como o owner, e a distincao esta no env, nao no
+# comando.
+if [ -n "${MIGRATIONS_CMD:-}" ]; then
+  echo "=== Migration one-shot (${NETWORK_NAME:-blockforce}): $MIGRATIONS_CMD ==="
+  ssh $SSH_OPTS "${SWARM_USER}@${SWARM_HOST}" \
+    "docker run --rm --pull always --network '${NETWORK_NAME:-blockforce}' --env-file '/tmp/${STACK_NAME}.env' '${EXPECTED_IMAGE}' $MIGRATIONS_CMD"
+  echo "✓ Migration OK"
 fi
 
 # Deploy

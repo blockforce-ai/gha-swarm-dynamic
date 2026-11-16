@@ -305,6 +305,20 @@ jobs:
 
           bash "${GITHUB_WORKSPACE}/.gha-template/scripts/generate-stack.sh"
 
+      - name: Read one-shot migration command
+        id: mig
+        shell: bash
+        env:
+          CONFIG: ${{ inputs.config_file }}
+          CLIENT: ${{ matrix.client }}
+          ENV_NAME: ${{ needs.generate-matrix.outputs.env_name }}
+        run: |
+          set -uo pipefail
+          CMD=$(yq -r ".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\") | .application.migrations.command // \"\"" "$CONFIG" 2>/dev/null || true)
+          [ "$CMD" = "null" ] && CMD=""
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
+          [ -n "$CMD" ] && echo "Migration one-shot: $CMD"
+
       - name: Deploy stack (SSH swarm manager)
         env:
           SWARM_HOST: ${{ steps.pick.outputs.host }}
@@ -314,6 +328,10 @@ jobs:
           STACK_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.yml
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           GHCR_USER: vitorta0506
+          # Migration one-shot (opt-in) + .env gerado ao lado do stack
+          MIGRATIONS_CMD: ${{ steps.mig.outputs.cmd }}
+          ENV_FILE: .gitlab/generated/stacks/${{ matrix.client }}-${{ matrix.env }}.env
+          NETWORK_NAME: blockforce
           # contexto p/ annotation Grafana (best-effort no deploy-stack.sh)
           SERVICE_NAME: ${{ inputs.service_name }}
           DEPLOY_CLIENT: ${{ matrix.client }}
