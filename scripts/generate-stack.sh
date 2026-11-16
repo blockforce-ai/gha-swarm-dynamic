@@ -52,7 +52,11 @@ if [ "$HC_ENABLED" = "true" ]; then
   HC_TEST=$(yq -r "$Q | .application.healthcheck.test // \"\"" "$CONFIG_FILE")
   if [ -z "$HC_TEST" ] || [ "$HC_TEST" = "null" ]; then
     # default: wget (busybox/alpine). Apps sem wget devem setar .healthcheck.test no config.
-    HC_TEST="wget --no-verbose --tries=1 --spider http://localhost:${APP_PORT}${HC_PATH} || exit 1"
+    # 127.0.0.1 e nao `localhost`: no container `localhost` resolve primeiro para
+    # ::1, e um servidor que escuta so em IPv4 (nginx `listen 8080`) recusa a
+    # conexao -- o check falha eternamente e, com failure_action: rollback, o
+    # servico nunca sai de 0/N. Visto no freemium-front.
+    HC_TEST="wget --no-verbose --tries=1 --spider http://127.0.0.1:${APP_PORT}${HC_PATH} || exit 1"
   fi
   HEALTHCHECK_BLOCK="    healthcheck:
       test: [\"CMD-SHELL\", \"${HC_TEST}\"]
