@@ -317,7 +317,10 @@ jobs:
           CMD=$(yq -r ".clients[] | select(.name==\"${CLIENT}\") | .environments[] | select(.name==\"${ENV_NAME}\") | .application.migrations.command // \"\"" "$CONFIG" 2>/dev/null || true)
           [ "$CMD" = "null" ] && CMD=""
           echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
-          [ -n "$CMD" ] && echo "Migration one-shot: $CMD"
+          # `if` e nao `[ ... ] && echo`: sem migration o teste falha, o echo
+          # nao roda, e o step termina com status 1 -- o deploy de um app
+          # estatico (front) morreria aqui sem nunca chegar ao stack deploy.
+          if [ -n "$CMD" ]; then echo "Migration one-shot: $CMD"; fi
 
       - name: Deploy stack (SSH swarm manager)
         env:
