@@ -211,15 +211,33 @@ jobs:
                 BUILD_ARGS+=(--build-arg "$k=$v"); echo "  build-arg: $k" ;;
             esac
           done <<< "$VARENV_CONTENT"
-          docker build \
+          # Cache de camadas no registry: sai do disco do runner e sobrevive a
+          # prune/limpeza. O driver "docker" (default) nao exporta cache, por isso
+          # usamos um builder docker-container (criado uma vez, reutilizado).
+          CACHE_REF="${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:buildcache"
+          BUILDER=blockforce-ci
+          if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+            docker buildx create --name "$BUILDER" --driver docker-container --bootstrap >/dev/null 2>&1 || BUILDER=default
+          fi
+          CACHE_ARGS=()
+          if [ "$BUILDER" != "default" ]; then
+            CACHE_ARGS+=(--cache-from "type=registry,ref=$CACHE_REF")
+            CACHE_ARGS+=(--cache-to "type=registry,ref=$CACHE_REF,mode=max")
+          else
+            echo "AVISO: builder docker-container indisponivel; build sem cache remoto"
+          fi
+
+          docker buildx build \
+            --builder "$BUILDER" \
+            --pull \
+            ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
             --build-arg NODE_ENV="${{ matrix.env }}" \
             --build-arg CLIENT="${{ matrix.client }}" \
             ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
             -t "$IMAGE_TAG" \
             -t "$IMAGE_LATEST" \
+            --push \
             .
-          docker push "$IMAGE_TAG"
-          docker push "$IMAGE_LATEST"
           echo "✓ Pushed: $IMAGE_TAG"
 
   # ==========================================================================
