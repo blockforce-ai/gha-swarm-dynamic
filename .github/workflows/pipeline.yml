@@ -215,13 +215,24 @@ jobs:
           # prune/limpeza. O driver "docker" (default) nao exporta cache, por isso
           # usamos um builder docker-container (criado uma vez, reutilizado).
           CACHE_REF="${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:buildcache"
-          BUILDER=blockforce-ci
-          if ! docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-            docker buildx create --name "$BUILDER" --driver docker-container --bootstrap >/dev/null 2>&1 || BUILDER=default
+          # Nome unico por job: cada perna da matriz roda com DOCKER_CONFIG isolado,
+          # entao um nome fixo colide (container buildx_buildkit_<nome>0) e o
+          # segundo job cai no driver default, que nao exporta cache.
+          BUILDER="ci-${GITHUB_RUN_ID}-$(echo "${{ matrix.client }}-${{ matrix.env }}" | tr -c 'a-zA-Z0-9-' '-')"
+          if docker buildx create --name "$BUILDER" --driver docker-container --bootstrap >/dev/null 2>&1; then
+            trap 'docker buildx rm -f "$BUILDER" >/dev/null 2>&1 || true' EXIT
+          else
+            BUILDER=default
           fi
           CACHE_ARGS=()
           if [ "$BUILDER" != "default" ]; then
-            CACHE_ARGS+=(--cache-from "type=registry,ref=$CACHE_REF")
+            # Primeiro build nao tem cache no registry: o importer falha com
+            # "not found" e derruba o passo. Checa antes de pedir.
+            if docker buildx imagetools inspect "$CACHE_REF" >/dev/null 2>&1; then
+              CACHE_ARGS+=(--cache-from "type=registry,ref=$CACHE_REF")
+            else
+              echo "  cache remoto ainda nao existe (primeiro build cria)"
+            fi
             CACHE_ARGS+=(--cache-to "type=registry,ref=$CACHE_REF,mode=max")
           else
             echo "AVISO: builder docker-container indisponivel; build sem cache remoto"
