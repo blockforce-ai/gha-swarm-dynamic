@@ -87,10 +87,14 @@ EXTRA_VOLUMES=""
 
 if [ "$REDIS_PROVISION" = "true" ]; then
   REDIS_NAME="redis-${CLIENT}-${ENVIRONMENT}"
+  # Chave do serviço no stack. O Swarm nomeia o serviço `<stack>_<chave>` e corta
+  # em 63 caracteres; stack de nome longo usa `redis.service_name: redis`. O alias
+  # de rede e o volume continuam `redis-<client>-<env>`, então o REDIS_HOST não muda.
+  REDIS_SERVICE=$(yq -r "$Q | .redis.service_name // \"${REDIS_NAME}\"" "$CONFIG_FILE")
   REDIS_IMAGE=$(yq -r "$Q | .redis.image // \"redis:7-alpine\"" "$CONFIG_FILE")
   REDIS_MEM=$(yq -r "$Q | .redis.memory_limit // \"256m\"" "$CONFIG_FILE")
   EXTRA_SERVICES+="
-  ${REDIS_NAME}:
+  ${REDIS_SERVICE}:
     image: ${REDIS_IMAGE}
     command: redis-server --appendonly yes
     networks:
@@ -109,7 +113,7 @@ if [ "$REDIS_PROVISION" = "true" ]; then
 "
   EXTRA_VOLUMES+="  ${REDIS_NAME}:
 "
-  echo "  + redis dedicado: ${REDIS_NAME}"
+  echo "  + redis dedicado: ${REDIS_NAME} (servico ${REDIS_SERVICE})"
 fi
 
 if [ "$DGRAPH_PROVISION" = "true" ]; then
