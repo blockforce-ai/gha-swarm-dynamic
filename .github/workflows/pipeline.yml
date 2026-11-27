@@ -178,6 +178,12 @@ jobs:
         env:
           IMAGE_TAG: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-${{ github.sha }}
           IMAGE_LATEST: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.service_name }}:${{ matrix.client }}-${{ matrix.env }}-latest
+          # Vault: frontends estaticos (Vite/Next) inlinam o env no BUNDLE, entao
+          # o build precisa da mesma fonte que o deploy. Sem isto, migrar um
+          # front para o Vault deixaria o bundle com 'undefined' mesmo com a
+          # entrada correta no Vault.
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
           # VARENV p/ injetar NEXT_PUBLIC_*/APP_URL como build-arg (Next.js inlina no build)
           VARENV_DEV_CEA: ${{ secrets.VARENV_DEV_CEA }}
           VARENV_STG_CEA: ${{ secrets.VARENV_STG_CEA }}
@@ -202,6 +208,22 @@ jobs:
           CLIENT_UP=$(echo "${{ matrix.client }}" | tr '[:lower:]' '[:upper:]')
           VAR_NAME="VARENV_${ENV_UP}_${CLIENT_UP}"
           VARENV_CONTENT="${!VAR_NAME:-}"
+          # Vault tem precedencia, igual ao deploy. Se a entrada nao existir,
+          # cai no VARENV_* do repo (apps ainda nao migrados).
+          if [ -n "${VAULT_ADDR:-}" ] && [ -n "${VAULT_TOKEN:-}" ]; then
+            VAULT_PATH="secret/data/${{ matrix.client }}/${{ needs.generate-matrix.outputs.env_name }}/${{ inputs.service_name }}"
+            VAULT_RESP=$(curl -sk --max-time 20 -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR/v1/$VAULT_PATH") || VAULT_RESP=""
+            # So troca a fonte se a entrada do Vault tiver alguma var que
+            # vire build-arg. Backends com entrada no Vault mas sem
+            # NEXT_PUBLIC_/VITE_/APP_URL continuam exatamente como hoje.
+            if [ -n "$VAULT_RESP" ] && echo "$VAULT_RESP" \
+                 | jq -e '.data.data | to_entries | map(select(.key|test("^(NEXT_PUBLIC_|VITE_|APP_URL)"))) | length > 0' >/dev/null 2>&1; then
+              VARENV_CONTENT=$(echo "$VAULT_RESP" | jq -r '.data.data | to_entries[] | "\(.key)=\(.value)"')
+              echo "  env: Vault $VAULT_PATH ($(echo "$VAULT_RESP" | jq -r '.data.data|length') vars)"
+            else
+              echo "  env: Vault $VAULT_PATH sem vars de build — fallback $VAR_NAME"
+            fi
+          fi
           BUILD_ARGS=()
           while IFS= read -r line; do
             case "$line" in
